@@ -176,7 +176,7 @@ class ProxyCheckerGUI:
         self.input_text.pack(fill=tk.BOTH, expand=True)
         
         # 示例文本
-        self.input_text.insert("1.0", "# 示例:\n192.168.1.1:8080\nhttp://192.168.1.2:8080\nsocks5://192.168.1.3:1080\n")
+        self.input_text.insert("1.0", "# 示例:\n192.168.1.1:8080\nhttp://192.168.1.2:8080\nsocks5://192.168.1.3:1080\n# 带账号密码:\nuser:pass@192.168.1.4:8080\nhttp://user:pass@192.168.1.5:8080\n")
         
         # 控制按钮
         control_frame = ttk.Frame(self.root)
@@ -240,12 +240,16 @@ class ProxyCheckerGUI:
             if not line or line.startswith('#'):
                 continue
             
-            # 匹配 protocol://ip:port 格式
-            match = re.match(r'(http|https|socks5)://([^:]+:\d+)', line)
+            # 匹配 protocol://username:password@ip:port 格式
+            match = re.match(r'(http|https|socks5)://([^@]+@)?(.+)', line)
             if match:
                 protocol = match.group(1)
-                proxy = match.group(2)
-                proxies.append((proxy, protocol))
+                auth = match.group(2) or ""  # username:password@ 或空
+                proxy = match.group(3)       # ip:port
+                proxies.append((auth + proxy, protocol))
+            # 匹配 username:password@ip:port 格式 (默认 http)
+            elif re.match(r'[^@]+@[\d.]+:\d+', line):
+                proxies.append((line, "http"))
             # 匹配 ip:port 格式 (默认 http)
             elif re.match(r'[\d.]+:\d+', line):
                 proxies.append((line, "http"))

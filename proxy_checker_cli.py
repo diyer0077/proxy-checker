@@ -250,13 +250,17 @@ def parse_proxies(text: str) -> List[Tuple[str, str]]:
         if not line or line.startswith('#'):
             continue
         
-        # 匹配 protocol://ip:port
-        match = re.match(r'(http|https|socks5)://([^:]+:\d+)', line)
+        # 匹配 protocol://username:password@ip:port 格式
+        match = re.match(r'(http|https|socks5)://([^@]+@)?(.+)', line)
         if match:
             protocol = match.group(1)
-            proxy = match.group(2)
-            proxies.append((proxy, protocol))
-        # 匹配 ip:port (默认 http)
+            auth = match.group(2) or ""  # username:password@ 或空
+            proxy = match.group(3)       # ip:port
+            proxies.append((auth + proxy, protocol))
+        # 匹配 username:password@ip:port 格式 (默认 http)
+        elif re.match(r'[^@]+@[\d.]+:\d+', line):
+            proxies.append((line, "http"))
+        # 匹配 ip:port 格式 (默认 http)
         elif re.match(r'[\d.]+:\d+', line):
             proxies.append((line, "http"))
     
