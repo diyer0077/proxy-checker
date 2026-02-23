@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import asyncio
 import aiohttp
+from aiohttp_socks import ProxyConnector
 import time
 import re
 from typing import List, Dict, Tuple
@@ -40,29 +41,59 @@ class ProxyChecker:
         proxy_url = f"{protocol}://{proxy}"
         start_time = time.time()
         
+        # 确保测试 URL 有协议前缀
+        test_url = self.test_url
+        if not test_url.startswith(('http://', 'https://')):
+            test_url = f'http://{test_url}'
+        
         try:
-            connector = aiohttp.TCPConnector(ssl=False)
             timeout_obj = aiohttp.ClientTimeout(total=self.timeout)
             
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
-                async with session.get(self.test_url, proxy=proxy_url) as response:
-                    latency = (time.time() - start_time) * 1000  # 转换为毫秒
-                    
-                    if response.status == 200:
-                        return ProxyResult(
-                            proxy=proxy,
-                            protocol=protocol,
-                            status="success",
-                            latency=latency
-                        )
-                    else:
-                        return ProxyResult(
-                            proxy=proxy,
-                            protocol=protocol,
-                            status="failed",
-                            latency=latency,
-                            error=f"HTTP {response.status}"
-                        )
+            # 根据协议类型选择不同的连接方式
+            if protocol.lower() == 'socks5':
+                # SOCKS5 代理使用 ProxyConnector
+                connector = ProxyConnector.from_url(proxy_url)
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
+                    async with session.get(test_url) as response:
+                        latency = (time.time() - start_time) * 1000
+                        
+                        if response.status == 200:
+                            return ProxyResult(
+                                proxy=proxy,
+                                protocol=protocol,
+                                status="success",
+                                latency=latency
+                            )
+                        else:
+                            return ProxyResult(
+                                proxy=proxy,
+                                protocol=protocol,
+                                status="failed",
+                                latency=latency,
+                                error=f"HTTP {response.status}"
+                            )
+            else:
+                # HTTP/HTTPS 代理使用标准方式
+                connector = aiohttp.TCPConnector(ssl=False)
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
+                    async with session.get(test_url, proxy=proxy_url) as response:
+                        latency = (time.time() - start_time) * 1000
+                        
+                        if response.status == 200:
+                            return ProxyResult(
+                                proxy=proxy,
+                                protocol=protocol,
+                                status="success",
+                                latency=latency
+                            )
+                        else:
+                            return ProxyResult(
+                                proxy=proxy,
+                                protocol=protocol,
+                                status="failed",
+                                latency=latency,
+                                error=f"HTTP {response.status}"
+                            )
                         
         except asyncio.TimeoutError:
             return ProxyResult(
