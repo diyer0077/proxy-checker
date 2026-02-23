@@ -1,8 +1,8 @@
-name: Build GUI EXE
+name: Build Windows EXE
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v3
     
     - name: Setup Python
@@ -20,34 +20,22 @@ jobs:
     
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
         pip install pyinstaller aiohttp
     
-    - name: Build GUI EXE
+    - name: Build EXE
       run: |
-        pyinstaller --onefile --windowed --name="ProxyChecker" --hidden-import=aiohttp --hidden-import=asyncio --collect-all aiohttp proxy_checker.py
+        pyinstaller --onefile --windowed --name=ProxyChecker proxy_checker.py
     
-    - name: Package release
+    - name: Create package
       run: |
-        New-Item -ItemType Directory -Force -Path release
-        Copy-Item "dist\ProxyChecker.exe" "release\"
-        Copy-Item "README.md" "release\"
-        Copy-Item "proxies_example.txt" "release\"
-        
-        "Proxy Checker - Quick Start`n`nUSAGE:`n  1. Double click ProxyChecker.exe`n  2. Import or paste proxy list`n  3. Click Start Check`n  4. View results`n`nPROXY FORMAT:`n  192.168.1.1:8080`n  http://192.168.1.2:8080`n  socks5://192.168.1.3:1080" | Out-File -FilePath "release\QuickStart.txt" -Encoding UTF8
-        
-        Compress-Archive -Path "release\*" -DestinationPath "ProxyChecker.zip"
+        mkdir release
+        copy dist\ProxyChecker.exe release\
+        copy README.md release\
+        copy proxies_example.txt release\
     
     - name: Upload Artifact
       uses: actions/upload-artifact@v3
       with:
-        name: ProxyChecker-GUI
-        path: ProxyChecker.zip
+        name: ProxyChecker-Windows
+        path: release/
         retention-days: 7
-    
-    - name: Display completion message
-      run: |
-        echo "=========================================="
-        echo "Build completed successfully!"
-        echo "=========================================="
-        echo "Download from the Artifacts section above"
