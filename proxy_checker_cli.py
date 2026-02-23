@@ -7,7 +7,7 @@
 
 import asyncio
 import aiohttp
-from aiohttp_socks import ProxyConnector
+import requests
 import time
 import re
 import argparse
@@ -40,6 +40,56 @@ class ProxyCheckerCLI:
         self.verbose = verbose
         self.results: List[ProxyResult] = []
         
+    def _check_socks5_sync(self, proxy_url: str, test_url: str, proxy: str, protocol: str, start_time: float) -> ProxyResult:
+        """同步检测 SOCKS5 代理（使用 requests）"""
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            proxies = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
+            response = requests.get(
+                test_url,
+                proxies=proxies,
+                timeout=self.timeout,
+                verify=False
+            )
+            latency = (time.time() - start_time) * 1000
+            
+            if response.status_code == 200:
+                return ProxyResult(
+                    proxy=proxy,
+                    protocol=protocol,
+                    status="success",
+                    latency=latency
+                )
+            else:
+                return ProxyResult(
+                    proxy=proxy,
+                    protocol=protocol,
+                    status="failed",
+                    latency=latency,
+                    error=f"HTTP {response.status_code}"
+                )
+        except requests.exceptions.Timeout:
+            return ProxyResult(
+                proxy=proxy,
+                protocol=protocol,
+                status="timeout",
+                latency=self.timeout * 1000,
+                error="连接超时"
+            )
+        except Exception as e:
+            return ProxyResult(
+                proxy=proxy,
+                protocol=protocol,
+                status="failed",
+                latency=0,
+                error=str(e)
+            )
+    
     async def check_proxy(self, proxy: str, protocol: str = "http") -> ProxyResult:
         """检测单个代理"""
         proxy_url = f"{protocol}://{proxy}"
@@ -51,35 +101,19 @@ class ProxyCheckerCLI:
             test_url = f'http://{test_url}'
         
         try:
-            timeout_obj = aiohttp.ClientTimeout(total=self.timeout)
-            
             # 根据协议类型选择不同的连接方式
             if protocol.lower() == 'socks5':
-                # SOCKS5 代理使用 ProxyConnector
-                connector = ProxyConnector.from_url(proxy_url)
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
-                    async with session.get(test_url, ssl=False) as response:
-                        # 读取响应内容以确保连接完整
-                        await response.read()
-                        latency = (time.time() - start_time) * 1000
-                        
-                        if response.status == 200:
-                            return ProxyResult(
-                                proxy=proxy,
-                                protocol=protocol,
-                                status="success",
-                                latency=latency
-                            )
-                        else:
-                            return ProxyResult(
-                                proxy=proxy,
-                                protocol=protocol,
-                                status="failed",
-                                latency=latency,
-                                error=f"HTTP {response.status}"
-                            )
+                # SOCKS5 使用 requests（同步，在 executor 中运行）
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    self._check_socks5_sync,
+                    proxy_url, test_url, proxy, protocol, start_time
+                )
+                return result
             else:
-                # HTTP/HTTPS 代理使用标准方式
+                # HTTP/HTTPS 代理使用 aiohttp（异步）
+                timeout_obj = aiohttp.ClientTimeout(total=self.timeout)
                 connector = aiohttp.TCPConnector(ssl=False)
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
                     async with session.get(test_url, proxy=proxy_url) as response:
