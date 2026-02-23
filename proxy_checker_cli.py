@@ -58,7 +58,9 @@ class ProxyCheckerCLI:
                 # SOCKS5 代理使用 ProxyConnector
                 connector = ProxyConnector.from_url(proxy_url)
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
-                    async with session.get(test_url) as response:
+                    async with session.get(test_url, ssl=False) as response:
+                        # 读取响应内容以确保连接完整
+                        await response.read()
                         latency = (time.time() - start_time) * 1000
                         
                         if response.status == 200:
