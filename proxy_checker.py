@@ -7,8 +7,6 @@ Windows 代理检测工具
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
-import asyncio
-import aiohttp
 import requests
 import time
 import re
@@ -16,6 +14,11 @@ from typing import List, Dict, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib3
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 @dataclass
@@ -36,22 +39,30 @@ class ProxyChecker:
         self.timeout = timeout
         self.results: List[ProxyResult] = []
         
-    def _check_socks5_sync(self, proxy_url: str, test_url: str, proxy: str, protocol: str, start_time: float) -> ProxyResult:
-        """同步检测 SOCKS5 代理（使用 requests）"""
+    def check_proxy(self, proxy: str, protocol: str = "http") -> ProxyResult:
+        """检测单个代理（统一使用 requests）"""
+        proxy_url = f"{protocol}://{proxy}"
+        start_time = time.time()
+        
+        # 确保测试 URL 有协议前缀
+        test_url = self.test_url
+        if not test_url.startswith(('http://', 'https://')):
+            test_url = f'http://{test_url}'
+        
         try:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            
+            # 所有协议统一使用 requests（支持 HTTP/HTTPS/SOCKS5）
             proxies = {
                 'http': proxy_url,
                 'https': proxy_url
             }
+            
             response = requests.get(
                 test_url,
                 proxies=proxies,
                 timeout=self.timeout,
                 verify=False  # 禁用 SSL 验证
             )
+            
             latency = (time.time() - start_time) * 1000
             
             if response.status_code == 200:
@@ -69,6 +80,7 @@ class ProxyChecker:
                     latency=latency,
                     error=f"HTTP {response.status_code}"
                 )
+                
         except requests.exceptions.Timeout:
             return ProxyResult(
                 proxy=proxy,
@@ -77,67 +89,13 @@ class ProxyChecker:
                 latency=self.timeout * 1000,
                 error="连接超时"
             )
-        except Exception as e:
+        except requests.exceptions.ProxyError as e:
             return ProxyResult(
                 proxy=proxy,
                 protocol=protocol,
                 status="failed",
                 latency=0,
-                error=str(e)
-            )
-    
-    async def check_proxy(self, proxy: str, protocol: str = "http") -> ProxyResult:
-        """检测单个代理"""
-        proxy_url = f"{protocol}://{proxy}"
-        start_time = time.time()
-        
-        # 确保测试 URL 有协议前缀
-        test_url = self.test_url
-        if not test_url.startswith(('http://', 'https://')):
-            test_url = f'http://{test_url}'
-        
-        try:
-            # 根据协议类型选择不同的连接方式
-            if protocol.lower() == 'socks5':
-                # SOCKS5 使用 requests（同步，在 executor 中运行）
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    self._check_socks5_sync,
-                    proxy_url, test_url, proxy, protocol, start_time
-                )
-                return result
-            else:
-                # HTTP/HTTPS 代理使用 aiohttp（异步）
-                timeout_obj = aiohttp.ClientTimeout(total=self.timeout)
-                connector = aiohttp.TCPConnector(ssl=False)
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout_obj) as session:
-                    async with session.get(test_url, proxy=proxy_url) as response:
-                        latency = (time.time() - start_time) * 1000
-                        
-                        if response.status == 200:
-                            return ProxyResult(
-                                proxy=proxy,
-                                protocol=protocol,
-                                status="success",
-                                latency=latency
-                            )
-                        else:
-                            return ProxyResult(
-                                proxy=proxy,
-                                protocol=protocol,
-                                status="failed",
-                                latency=latency,
-                                error=f"HTTP {response.status}"
-                            )
-                        
-        except asyncio.TimeoutError:
-            return ProxyResult(
-                proxy=proxy,
-                protocol=protocol,
-                status="timeout",
-                latency=self.timeout * 1000,
-                error="连接超时"
+                error=f"代理错误: {str(e)[:50]}"
             )
         except Exception as e:
             return ProxyResult(
@@ -145,26 +103,30 @@ class ProxyChecker:
                 protocol=protocol,
                 status="failed",
                 latency=0,
-                error=str(e)
+                error=str(e)[:50]  # 限制错误信息长度
             )
     
-    async def check_proxies_batch(self, proxies: List[Tuple[str, str]], 
-                                   concurrency: int = 10,
-                                   progress_callback=None) -> List[ProxyResult]:
-        """批量检测代理"""
+    def check_proxies_batch(self, proxies: List[Tuple[str, str]], 
+                            concurrency: int = 10,
+                            progress_callback=None) -> List[ProxyResult]:
+        """批量检测代理（使用线程池）"""
         self.results = []
-        semaphore = asyncio.Semaphore(concurrency)
+        total = len(proxies)
         
-        async def check_with_semaphore(proxy, protocol):
-            async with semaphore:
-                result = await self.check_proxy(proxy, protocol)
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            # 提交所有任务
+            future_to_proxy = {
+                executor.submit(self.check_proxy, proxy, protocol): (proxy, protocol)
+                for proxy, protocol in proxies
+            }
+            
+            # 处理完成的任务
+            for future in as_completed(future_to_proxy):
+                result = future.result()
                 self.results.append(result)
+                
                 if progress_callback:
-                    progress_callback(len(self.results), len(proxies))
-                return result
-        
-        tasks = [check_with_semaphore(proxy, protocol) for proxy, protocol in proxies]
-        await asyncio.gather(*tasks)
+                    progress_callback(len(self.results), total)
         
         return self.results
     
@@ -197,7 +159,7 @@ class ProxyCheckerGUI:
     
     def __init__(self, root):
         self.root = root
-        self.root.title("代理检测工具 v1.0")
+        self.root.title("代理检测工具 v1.3")
         self.root.geometry("900x700")
         
         self.checker = ProxyChecker()
@@ -383,19 +345,13 @@ class ProxyCheckerGUI:
     
     def run_check(self, proxies):
         """运行检测(在独立线程中)"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
         try:
-            loop.run_until_complete(
-                self.checker.check_proxies_batch(
-                    proxies,
-                    concurrency=self.concurrency_var.get(),
-                    progress_callback=self.update_progress
-                )
+            self.checker.check_proxies_batch(
+                proxies,
+                concurrency=self.concurrency_var.get(),
+                progress_callback=self.update_progress
             )
         finally:
-            loop.close()
             self.root.after(0, self.check_complete)
     
     def update_progress(self, current, total):
