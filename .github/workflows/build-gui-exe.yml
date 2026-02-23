@@ -10,32 +10,27 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
     
-    - name: Setup Python
-      uses: actions/setup-python@v4
+    - uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
-    - name: Install dependencies
-      run: |
-        pip install pyinstaller aiohttp
+    - name: Install
+      run: pip install pyinstaller aiohttp
     
-    - name: Build EXE
-      run: |
-        pyinstaller --onefile --windowed --name=ProxyChecker proxy_checker.py
+    - name: Build
+      run: pyinstaller --onefile --noconsole proxy_checker.py
     
-    - name: Create package
+    - name: Package
+      shell: cmd
       run: |
         mkdir release
-        copy dist\ProxyChecker.exe release\
+        copy dist\proxy_checker.exe release\ProxyChecker.exe
         copy README.md release\
         copy proxies_example.txt release\
     
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v3
       with:
         name: ProxyChecker-Windows
         path: release/
-        retention-days: 7
