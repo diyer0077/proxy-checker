@@ -61,12 +61,9 @@ See proxies_example.txt for examples.
         
         Compress-Archive -Path "release\*" -DestinationPath "ProxyChecker.zip"
     
-    - name: Upload to Alibaba Cloud OSS
-      env:
-        OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-        OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+    - name: Create upload script
       run: |
-        python -c @"
+        @"
         import oss2
         import os
         from datetime import datetime
@@ -103,7 +100,13 @@ See proxies_example.txt for examples.
         
         with open('download_url.txt', 'w') as f:
             f.write(url)
-        "@
+        "@ | Out-File -FilePath "upload_oss.py" -Encoding UTF8
+    
+    - name: Upload to Alibaba Cloud OSS
+      env:
+        OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+        OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      run: python upload_oss.py
     
     - name: Upload GitHub Artifact
       uses: actions/upload-artifact@v3
